@@ -30,13 +30,11 @@ jobs:
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
-
-      - name: Set up JDK 21
+      - name: Set up JDK
         uses: actions/setup-java@v5
         with:
           java-version: 21
           distribution: temurin
-
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -45,38 +43,31 @@ jobs:
             ~/.gradle/wrapper
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-
       - name: Copy CI gradle.properties
         run: |
           mkdir -p ~/.gradle
           cp .github/runner-files/ci-gradle.properties ~/.gradle/gradle.properties
-
-      - name: Build WebUI and Jar
+      - name: Build and copy webUI, Build Jar
         env:
           ProductBuildType: "Stable"
         run: ./gradlew :server:downloadWebUI :server:shadowJar --stacktrace
-
-      - name: Upload JAR artifact
+      - name: Upload Jar
         uses: actions/upload-artifact@v4
         with:
           name: jar
           path: server/build/*.jar
           if-no-files-found: error
-
       - name: Upload icons
         uses: actions/upload-artifact@v4
         with:
           name: icon
           path: server/src/main/resources/icon
           if-no-files-found: error
-
-      - name: Tar scripts directory to preserve permissions
+      - name: Tar scripts dir to maintain file permissions
         run: tar -cvzf scripts.tar.gz scripts/
-
-      - name: Upload scripts archive
+      - name: Upload scripts.tar.gz
         uses: actions/upload-artifact@v4
         with:
           name: scripts
@@ -104,17 +95,8 @@ jobs:
         with:
           java-version: 21
           distribution: temurin
-
-      - name: Package custom JDK with jlink
-        run: |
-          jlink \
-            --add-modules java.base,java.compiler,java.datatransfer,java.desktop,java.instrument,java.logging,java.management,java.naming,java.prefs,java.scripting,java.se,java.security.jgss,java.security.sasl,java.sql,java.transaction.xa,java.xml,jdk.attach,jdk.crypto.ec,jdk.jdi,jdk.management,jdk.net,jdk.random,jdk.unsupported,jdk.unsupported.desktop,jdk.zipfs \
-            --output suwa \
-            --strip-debug \
-            --no-man-pages \
-            --no-header-files \
-            --compress=2
-
+      - name: Package JDK
+        run: jlink --add-modules java.base,java.compiler,java.datatransfer,java.desktop,java.instrument,java.logging,java.management,java.naming,java.prefs,java.scripting,java.se,java.security.jgss,java.security.sasl,java.sql,java.transaction.xa,java.xml,jdk.attach,jdk.crypto.ec,jdk.jdi,jdk.management,jdk.net,jdk.random,jdk.unsupported,jdk.unsupported.desktop,jdk.zipfs --output suwa --strip-debug --no-man-pages --no-header-files --compress=2
       - name: Upload JDK package
         uses: actions/upload-artifact@v4
         with:
@@ -143,38 +125,36 @@ jobs:
             jre: macOS-arm64
           - name: windows-x64
             jre: windows-x64
+    name: Make ${{ matrix.name }} release
+    needs: [build, jlink]
+    runs-on: ubuntu-latest
     steps:
       - name: Download JAR artifact
         uses: actions/download-artifact@v5
         with:
           name: jar
           path: server/build
-
-      - name: Download JDK package
+      - name: Download JRE
         if: ${{ matrix.name != 'linux-assets' && matrix.name != 'debian-all' }}
         uses: actions/download-artifact@v5
         with:
           name: ${{ matrix.jre }}-jre
           path: jre
-
       - name: Download icons
         uses: actions/download-artifact@v5
         with:
           name: icon
           path: server/src/main/resources/icon
-
-      - name: Download scripts archive
+      - name: Download scripts.tar.gz
         uses: actions/download-artifact@v5
         with:
           name: scripts
-
-      - name: Extract scripts
-        run: tar -xvpf scripts.tar.gz
-
-      - name: Run bundler
-        run: scripts/bundler.sh -o upload/ ${{ matrix.name }}
-
-      - name: Upload release package
+      - name: Make ${{ matrix.name }} release
+        run: |
+          mkdir upload/
+          tar -xvpf scripts.tar.gz
+          scripts/bundler.sh -o upload/ ${{ matrix.name }}
+      - name: Upload ${{ matrix.name }} files
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
@@ -191,14 +171,11 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           path: release
-
       - name: Generate checksums
         run: cd release && sha256sum * > Checksums.sha256
-
-      - name: Draft GitHub release
+      - name: Release
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ github.token }}
           draft: true
           files: release/*
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
