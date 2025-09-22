@@ -37,6 +37,13 @@ enum class WebUIFlavor(
         "https://api.github.com/repos/Suwayomi/Suwayomi-VUI/releases/latest",
         "Suwayomi-VUI",
     ),
+    DRAVEE(
+        "DraVeeUI",
+        "https://github.com/Caio99BR/Suwayomi-WebUI",
+        "https://raw.githubusercontent.com/Caio99BR/Suwayomi-WebUI/master/versionToServerVersionMapping.json",
+        "https://api.github.com/repos/Caio99BR/Suwayomi-WebUI/releases/latest",
+        "Suwayomi-WebUI",
+    ),
     CUSTOM("Custom", "", "", "", ""),
     ;
 
