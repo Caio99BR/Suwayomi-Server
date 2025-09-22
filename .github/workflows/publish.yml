@@ -35,6 +35,14 @@ jobs:
         with:
           java-version: 21
           distribution: temurin
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
       - name: Copy CI gradle.properties
@@ -67,7 +75,9 @@ jobs:
           if-no-files-found: error
 
   jlink:
+    name: Create custom JRE
     runs-on: ${{ matrix.os }}
+    needs: check_wrapper
     strategy:
       matrix:
         include:
@@ -94,6 +104,9 @@ jobs:
           path: suwa
 
   bundle:
+    name: Make release packages
+    needs: [build, jlink]
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -149,41 +162,14 @@ jobs:
           if-no-files-found: error
 
   release:
+    name: Create GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: bundle
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v5
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v5
         with:
-          name: jar
-          path: release
-      - uses: actions/download-artifact@v5
-        with:
-          name: debian-all
-          path: release
-      - uses: actions/download-artifact@v5
-        with:
-          name: appimage
-          path: release
-      - uses: actions/download-artifact@v5
-        with:
-          name: linux-assets
-          path: release
-      - uses: actions/download-artifact@v5
-        with:
-          name: linux-x64
-          path: release
-      - uses: actions/download-artifact@v5
-        with:
-          name: macOS-x64
-          path: release
-      - uses: actions/download-artifact@v5
-        with:
-          name: macOS-arm64
-          path: release
-      - uses: actions/download-artifact@v5
-        with:
-          name: windows-x64
           path: release
       - name: Generate checksums
         run: cd release && sha256sum * > Checksums.sha256
