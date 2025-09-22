@@ -15,14 +15,13 @@ jobs:
     name: Validate Gradle Wrapper
     runs-on: ubuntu-latest
     steps:
-      - name: Clone repo
+      - name: Checkout repository
         uses: actions/checkout@v5
-
       - name: Validate Gradle Wrapper
-        uses: gradle/actions/wrapper-validation@v4
+        uses: gradle/actions/wrapper-validation@v3
 
   build:
-    name: Build Jar
+    name: Build Jar and WebUI
     needs: check_wrapper
     runs-on: ubuntu-latest
     steps:
@@ -30,49 +29,54 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ github.ref }}
-          path: master
           fetch-depth: 0
 
-      - name: Set up JDK
+      - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
           java-version: 21
-          distribution: 'temurin'
+          distribution: temurin
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: Copy CI gradle.properties
         run: |
-          cd master
           mkdir -p ~/.gradle
-          cp .github/runner-files/ci-gradle.properties \
-            ~/.gradle/gradle.properties
+          cp .github/runner-files/ci-gradle.properties ~/.gradle/gradle.properties
 
-      - name: Build and copy webUI, Build Jar
+      - name: Build WebUI and Jar
         env:
           ProductBuildType: "Stable"
-        working-directory: master
         run: ./gradlew :server:downloadWebUI :server:shadowJar --stacktrace
 
-      - name: Upload Jar
+      - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: jar
-          path: master/server/build/*.jar
+          path: server/build/*.jar
           if-no-files-found: error
 
       - name: Upload icons
         uses: actions/upload-artifact@v4
         with:
           name: icon
-          path: master/server/src/main/resources/icon
+          path: server/src/main/resources/icon
           if-no-files-found: error
 
-      - name: Tar scripts dir to maintain file permissions
-        run: tar -cvzf scripts.tar.gz -C master/ scripts/
+      - name: Tar scripts directory to preserve permissions
+        run: tar -cvzf scripts.tar.gz scripts/
 
-      - name: Upload scripts.tar.gz
+      - name: Upload scripts archive
         uses: actions/upload-artifact@v4
         with:
           name: scripts
@@ -80,7 +84,9 @@ jobs:
           if-no-files-found: error
 
   jlink:
+    name: Create custom JRE
     runs-on: ${{ matrix.os }}
+    needs: check_wrapper
     strategy:
       matrix:
         include:
@@ -92,17 +98,22 @@ jobs:
             name: macOS-arm64
           - os: macos-13
             name: macOS-x64
-        os: [ubuntu-latest, windows-latest, macos-14, macos-13]
-
     steps:
-      - name: Set up JDK
+      - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
           java-version: 21
-          distribution: 'temurin'
+          distribution: temurin
 
-      - name: Package JDK
-        run: jlink --add-modules java.base,java.compiler,java.datatransfer,java.desktop,java.instrument,java.logging,java.management,java.naming,java.prefs,java.scripting,java.se,java.security.jgss,java.security.sasl,java.sql,java.transaction.xa,java.xml,jdk.attach,jdk.crypto.ec,jdk.jdi,jdk.management,jdk.net,jdk.random,jdk.unsupported,jdk.unsupported.desktop,jdk.zipfs --output suwa --strip-debug --no-man-pages --no-header-files --compress=2
+      - name: Package custom JDK with jlink
+        run: |
+          jlink \
+            --add-modules java.base,java.compiler,java.datatransfer,java.desktop,java.instrument,java.logging,java.management,java.naming,java.prefs,java.scripting,java.se,java.security.jgss,java.security.sasl,java.sql,java.transaction.xa,java.xml,jdk.attach,jdk.crypto.ec,jdk.jdi,jdk.management,jdk.net,jdk.random,jdk.unsupported,jdk.unsupported.desktop,jdk.zipfs \
+            --output suwa \
+            --strip-debug \
+            --no-man-pages \
+            --no-header-files \
+            --compress=2
 
       - name: Upload JDK package
         uses: actions/upload-artifact@v4
@@ -111,6 +122,9 @@ jobs:
           path: suwa
 
   bundle:
+    name: Make release packages
+    needs: [build, jlink]
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -129,21 +143,16 @@ jobs:
             jre: macOS-arm64
           - name: windows-x64
             jre: windows-x64
-        name: [debian-all, appimage, linux-assets, linux-x64, macOS-x64, macOS-arm64, windows-x64]
-
-    name: Make ${{ matrix.name }} release
-    needs: [build, jlink]
-    runs-on: ubuntu-latest
     steps:
-      - name: Download Jar
+      - name: Download JAR artifact
         uses: actions/download-artifact@v5
         with:
           name: jar
           path: server/build
 
-      - name: Download JRE
+      - name: Download JDK package
+        if: ${{ matrix.name != 'linux-assets' && matrix.name != 'debian-all' }}
         uses: actions/download-artifact@v5
-        if: matrix.name != 'linux-assets' && matrix.name != 'debian-all'
         with:
           name: ${{ matrix.jre }}-jre
           path: jre
@@ -154,18 +163,18 @@ jobs:
           name: icon
           path: server/src/main/resources/icon
 
-      - name: Download scripts.tar.gz
+      - name: Download scripts archive
         uses: actions/download-artifact@v5
         with:
           name: scripts
 
-      - name: Make ${{ matrix.name }} release
-        run: |
-          mkdir upload/
-          tar -xvpf scripts.tar.gz
-          scripts/bundler.sh -o upload/ ${{ matrix.name }}
+      - name: Extract scripts
+        run: tar -xvpf scripts.tar.gz
 
-      - name: Upload ${{ matrix.name }} files
+      - name: Run bundler
+        run: scripts/bundler.sh -o upload/ ${{ matrix.name }}
+
+      - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
@@ -173,49 +182,23 @@ jobs:
           if-no-files-found: error
 
   release:
+    name: Create GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: bundle
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v5
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v5
         with:
-          name: jar
-          path: release
-      - uses: actions/download-artifact@v5
-        with:
-          name: debian-all
-          path: release
-      - uses: actions/download-artifact@v5
-        with:
-          name: appimage
-          path: release
-      - uses: actions/download-artifact@v5
-        with:
-          name: linux-assets
-          path: release
-      - uses: actions/download-artifact@v5
-        with:
-          name: linux-x64
-          path: release
-      - uses: actions/download-artifact@v5
-        with:
-          name: macOS-x64
-          path: release
-      - uses: actions/download-artifact@v5
-        with:
-          name: macOS-arm64
-          path: release
-      - uses: actions/download-artifact@v5
-        with:
-          name: windows-x64
           path: release
 
       - name: Generate checksums
         run: cd release && sha256sum * > Checksums.sha256
 
-      - name: Release
+      - name: Draft GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          token: ${{ secrets.DEPLOY_RELEASE_TOKEN }}
           draft: true
           files: release/*
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
